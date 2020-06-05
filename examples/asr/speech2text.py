@@ -40,6 +40,7 @@ def main():
         help="See: https://nvidia.github.io/apex/amp.html",
     )
     parser.add_argument("--train_dataset", type=str, required=True, default=None, help="training dataset path")
+    parser.add_argument("--tar_path", type=str, required=True)
     parser.add_argument("--eval_datasets", type=str, nargs="*", help="evaluation datasets paths")
     parser.add_argument("--eval_freq", default=1000, type=int, help="Evaluation frequency")
     parser.add_argument("--eval_batch_size", type=int, default=8, help="batch size to use for evaluation")
@@ -69,6 +70,7 @@ def main():
         optimization_level=args.amp_opt_level,  # This is necessary for mixed precision optimization
         cudnn_benchmark=True,
     )
+    args.num_gpus = nf.world_size
 
     # Instantiate the model which we'll train
     if args.asr_model.endswith('.yaml'):
@@ -84,22 +86,24 @@ def main():
     logging.info(f"Training {type(asr_model)} model.")
     logging.info(f"Training CTC model with alphabet {asr_model.vocabulary}.")
     logging.info(f"Training CTC model with {asr_model.num_weights} weights.\n\n")
+    args.num_weights = asr_model.num_weights
 
-    train_data_layer = nemo_asr.AudioToTextDataLayer(
+    train_data_layer = nemo_asr.TarredAudioToTextDataLayer(
+        audio_tar_filepaths=args.tar_path,
         manifest_filepath=args.train_dataset,
         labels=asr_model.vocabulary,
         batch_size=args.batch_size,
-        trim_silence=args.trim_silence,
-        max_duration=args.max_train_audio_len,
-        shuffle=True,
-    )
+        normalize_transcripts=False,
+        num_workers=16)
+
     ctc_loss = nemo_asr.CTCLossNM(num_classes=len(asr_model.vocabulary))
     greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
-    audio_signal, audio_signal_len, transcript, transcript_len = train_data_layer()
-    log_probs, encoded_len = asr_model(input_signal=audio_signal, length=audio_signal_len)
-    predictions = greedy_decoder(log_probs=log_probs)
-    loss = ctc_loss(log_probs=log_probs, targets=transcript, input_length=encoded_len, target_length=transcript_len)
+    with nemo.core.NeuralGraph(operation_mode=nemo.core.OperationMode.training) as tg:
+        audio_signal, audio_signal_len, transcript, transcript_len = train_data_layer()
+        log_probs, encoded_len = asr_model(input_signal=audio_signal, length=audio_signal_len)
+        predictions = greedy_decoder(log_probs=log_probs)
+        loss = ctc_loss(log_probs=log_probs, targets=transcript, input_length=encoded_len, target_length=transcript_len)
 
     # Callbacks which we'll be using:
     callbacks = []
@@ -130,7 +134,8 @@ def main():
         logging.info(f"Will perform evaluation every {args.eval_freq} steps.")
         for ind, eval_dataset in enumerate(args.eval_datasets):
             eval_data_layer = nemo_asr.AudioToTextDataLayer(
-                manifest_filepath=eval_dataset, labels=asr_model.vocabulary, batch_size=args.eval_batch_size
+                manifest_filepath=eval_dataset, labels=asr_model.vocabulary, batch_size=args.eval_batch_size,
+                normalize_transcripts=False
             )
             audio_signal, audio_signal_len, transcript, transcript_len = eval_data_layer()
             log_probs, encoded_len = asr_model(input_signal=audio_signal, length=audio_signal_len)
