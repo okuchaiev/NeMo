@@ -94,6 +94,7 @@ def main():
         labels=asr_model.vocabulary,
         batch_size=args.batch_size,
         normalize_transcripts=False,
+        max_duration=args.max_train_audio_len,
         num_workers=16)
 
     ctc_loss = nemo_asr.CTCLossNM(num_classes=len(asr_model.vocabulary))
