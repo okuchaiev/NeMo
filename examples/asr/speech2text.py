@@ -61,6 +61,7 @@ def main():
     parser.add_argument("--wandb_project", default=None, type=str)
     parser.add_argument("--max_train_audio_len", default=16.7, type=float, help="max audio length")
     parser.add_argument("--trim_silence", default=True, type=bool, help="trim audio from silence or not")
+    parser.add_argument("--zero_infinity", default=False, type=bool)
     args = parser.parse_args()
 
     # Setup NeuralModuleFactory to control training
@@ -97,7 +98,7 @@ def main():
         max_duration=args.max_train_audio_len,
         num_workers=16)
 
-    ctc_loss = nemo_asr.CTCLossNM(num_classes=len(asr_model.vocabulary))
+    ctc_loss = nemo_asr.CTCLossNM(num_classes=len(asr_model.vocabulary), zero_infinity=args.zero_infinity)
     greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
     with nemo.core.NeuralGraph(operation_mode=nemo.core.OperationMode.training) as tg:
